@@ -30,7 +30,7 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2.1.1
         
       - name: build
-      - run: zig build
+        run: zig build
 
       - name: test
-      - run: zig test src/main.zig 
+        run: zig test src/main.zig 
