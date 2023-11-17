@@ -12,7 +12,7 @@ const BenecodeTypes = enum {
 const BenecodeValue = union(BenecodeTypes) {
     Int: i32,
     Str: []const u8,
-    List: []BenecodeValue,
+    List: std.ArrayList(BenecodeValue),
     Dict: std.StringHashMap(BenecodeValue),
 };
 
@@ -32,14 +32,14 @@ pub fn main() !void {
     defer std.heap.page_allocator.free(buf);
 
     _ = try f.readAll(buf);
-    _ = try parse_benecode(buf);
+    _ = try parse_benecode(buf, std.heap.page_allocator);
 }
 
-fn parse_benecode(bytes: []const u8) BenecodeErrors!BenecodeValue {
+fn parse_benecode(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecode {
     return switch (bytes[0]) {
         'i' => parse_int(bytes),
-        'l' => parse_list(bytes),
-        'd' => parse_dict(bytes),
+        'l' => parse_list(bytes, allocator),
+        'd' => parse_dict(bytes, allocator),
         '0'...'9' => parse_str(bytes),
         else => unreachable,
     };
@@ -106,13 +106,33 @@ fn parse_str(bytes: []const u8) BenecodeErrors!ParsedBenecode {
     return ParsedBenecode{ .value = value, .chars_parsed = colon_pos + size };
 }
 
-fn parse_list(bytes: []const u8) BenecodeErrors!BenecodeValue {
-    _ = bytes;
-    return BenecodeErrors.InvalidList;
+fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecode {
+    var curr: usize = 0;
+    if (bytes[curr] != 'l') {
+        return BenecodeErrors.InvalidList;
+    }
+    curr += 1;
+
+    var array = std.ArrayList(BenecodeValue).init(allocator);
+    while (curr < bytes.len and bytes[curr] != 'e') {
+        const benecode = try parse_benecode(bytes[curr..], allocator);
+        try array.append(benecode.value);
+        curr += benecode.chars_parsed;
+    }
+
+    if (bytes[curr] != 'e') {
+        return BenecodeErrors.InvalidList;
+    }
+    curr += 1;
+
+    const value = BenecodeValue{ .List = array };
+
+    return ParsedBenecode{ .value = value, .chars_parsed = curr };
 }
 
-fn parse_dict(bytes: []const u8) BenecodeErrors!BenecodeValue {
-    _ = bytes;
+fn parse_dict(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecode {
+    _ = allocator;
+    std.debug.print("bytes: {s}\n", .{bytes});
     return BenecodeErrors.InvalidDict;
 }
 
@@ -161,20 +181,39 @@ test "parse invalid benecode int negative zero" {
 
 test "parse benecode list" {
     const str = "l4:spami3ee";
-    const value = try parse_list(str);
-    try std.testing.expectEqual(value.List.len, 2);
-    try std.testing.expectEqualStrings(value.List[0].Str, "spam");
-    try std.testing.expectEqual(value.List[1].Int, 3);
+    const result = try parse_list(str, std.testing.allocator);
+    defer result.value.List.deinit();
+    try std.testing.expectEqual(result.value.List.items.len, 2);
+    try std.testing.expectEqualStrings("spam", result.value.List.items[0].Str);
+    try std.testing.expectEqual(result.value.List.items[1].Int, 3);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "parse empty benecode list" {
+    const str = "le";
+    const result = try parse_list(str, std.testing.allocator);
+    defer result.value.List.deinit();
+    try std.testing.expectEqual(result.value.List.items.len, 0);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "parse benecode nested lists" {
+    const str = "l4:testl6:nested5:valueee";
+    const result = try parse_list(str, std.testing.allocator);
+    defer result.value.List.deinit();
+    defer result.value.List.items[1].List.deinit();
+    try std.testing.expectEqualStrings("test", result.value.List.items[0].Str);
+    try std.testing.expectEqualStrings("nested", result.value.List.items[1].List.items[0].Str);
+    try std.testing.expectEqualStrings("value", result.value.List.items[1].List.items[1].Str);
 }
 
 test "parse benecode dict" {
     const str = "d3:cow3:moo4:spam4:eggse";
-    const value = try parse_dict(str);
+    const value = try parse_dict(str, std.testing.allocator);
     try std.testing.expectEqualStrings(value.Dict.get("cow").?.Str, "moo");
     try std.testing.expectEqualStrings(value.Dict.get("spam").?.Str, "eggs");
 }
 
-test "parse benecode nested lists" {}
 test "parse benecode nested dicts" {}
 test "parse benecode dicts in lists" {}
 test "parse benecode lists in dicts" {}
