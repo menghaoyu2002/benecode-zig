@@ -16,7 +16,7 @@ const BenecodeValue = union(BenecodeTypes) {
     Dict: std.StringHashMap(BenecodeValue),
 };
 
-const ParsedBenecode = struct {
+const ParsedBenecodeValue = struct {
     value: BenecodeValue,
     chars_parsed: usize,
 };
@@ -35,7 +35,7 @@ pub fn main() !void {
     _ = try parse_benecode(buf, std.heap.page_allocator);
 }
 
-fn parse_benecode(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecode {
+fn parse_benecode(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecodeValue {
     return switch (bytes[0]) {
         'i' => parse_int(bytes),
         'l' => parse_list(bytes, allocator),
@@ -45,7 +45,7 @@ fn parse_benecode(bytes: []const u8, allocator: std.mem.Allocator) BenecodeError
     };
 }
 
-fn parse_int(bytes: []const u8) BenecodeErrors!ParsedBenecode {
+fn parse_int(bytes: []const u8) BenecodeErrors!ParsedBenecodeValue {
     var curr: usize = 0;
     if (bytes[curr] != 'i') {
         return BenecodeErrors.InvalidInt;
@@ -82,10 +82,10 @@ fn parse_int(bytes: []const u8) BenecodeErrors!ParsedBenecode {
     }
 
     const value = BenecodeValue{ .Int = int };
-    return ParsedBenecode{ .value = value, .chars_parsed = curr };
+    return ParsedBenecodeValue{ .value = value, .chars_parsed = curr };
 }
 
-fn parse_str(bytes: []const u8) BenecodeErrors!ParsedBenecode {
+fn parse_str(bytes: []const u8) BenecodeErrors!ParsedBenecodeValue {
     var size: usize = 0;
     var colon_pos: usize = 0;
     while (colon_pos < bytes.len and bytes[colon_pos] != ':') {
@@ -103,10 +103,10 @@ fn parse_str(bytes: []const u8) BenecodeErrors!ParsedBenecode {
     colon_pos += 1;
 
     const value = BenecodeValue{ .Str = bytes[colon_pos .. colon_pos + size] };
-    return ParsedBenecode{ .value = value, .chars_parsed = colon_pos + size };
+    return ParsedBenecodeValue{ .value = value, .chars_parsed = colon_pos + size };
 }
 
-fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecode {
+fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecodeValue {
     var curr: usize = 0;
     if (bytes[curr] != 'l') {
         return BenecodeErrors.InvalidList;
@@ -127,10 +127,10 @@ fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!Pa
 
     const value = BenecodeValue{ .List = array };
 
-    return ParsedBenecode{ .value = value, .chars_parsed = curr };
+    return ParsedBenecodeValue{ .value = value, .chars_parsed = curr };
 }
 
-fn parse_dict(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecode {
+fn parse_dict(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecodeValue {
     _ = allocator;
     std.debug.print("bytes: {s}\n", .{bytes});
     return BenecodeErrors.InvalidDict;
@@ -209,9 +209,9 @@ test "parse benecode nested lists" {
 
 test "parse benecode dict" {
     const str = "d3:cow3:moo4:spam4:eggse";
-    const value = try parse_dict(str, std.testing.allocator);
-    try std.testing.expectEqualStrings(value.Dict.get("cow").?.Str, "moo");
-    try std.testing.expectEqualStrings(value.Dict.get("spam").?.Str, "eggs");
+    const result = try parse_dict(str, std.testing.allocator);
+    try std.testing.expectEqualStrings(result.value.Dict.get("cow").?.Str, "moo");
+    try std.testing.expectEqualStrings(result.value.Dict.get("spam").?.Str, "eggs");
 }
 
 test "parse benecode nested dicts" {}
