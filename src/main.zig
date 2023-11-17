@@ -68,7 +68,7 @@ fn parse_int(bytes: []const u8) BenecodeErrors!ParsedBenecodeValue {
         curr += 1;
     }
 
-    if (bytes[curr] != 'e') {
+    if (curr >= bytes.len or bytes[curr] != 'e') {
         return BenecodeErrors.InvalidInt;
     }
     curr += 1;
@@ -97,7 +97,7 @@ fn parse_str(bytes: []const u8) BenecodeErrors!ParsedBenecodeValue {
         colon_pos += 1;
     }
 
-    if (bytes[colon_pos] != ':') {
+    if (colon_pos >= bytes.len or bytes[colon_pos] != ':') {
         return BenecodeErrors.InvalidStr;
     }
     colon_pos += 1;
@@ -120,7 +120,8 @@ fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!Pa
         curr += benecode.chars_parsed;
     }
 
-    if (bytes[curr] != 'e') {
+    if (curr >= bytes.len or bytes[curr] != 'e') {
+        array.deinit();
         return BenecodeErrors.InvalidList;
     }
     curr += 1;
@@ -131,8 +132,8 @@ fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!Pa
 }
 
 fn parse_dict(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecodeValue {
+    _ = bytes;
     _ = allocator;
-    std.debug.print("bytes: {s}\n", .{bytes});
     return BenecodeErrors.InvalidDict;
 }
 
@@ -195,6 +196,12 @@ test "parse empty benecode list" {
     defer result.value.List.deinit();
     try std.testing.expectEqual(result.value.List.items.len, 0);
     try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "parse invalid benecode list" {
+    const str = "l4:test";
+    const result = parse_list(str, std.testing.allocator);
+    try std.testing.expectError(BenecodeErrors.InvalidList, result);
 }
 
 test "parse benecode nested lists" {
