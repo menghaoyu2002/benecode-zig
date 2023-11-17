@@ -16,6 +16,11 @@ const BenecodeValue = union(BenecodeTypes) {
     Dict: std.StringHashMap(BenecodeValue),
 };
 
+const ParsedBenecode = struct {
+    value: BenecodeValue,
+    chars_parsed: usize,
+};
+
 pub fn main() !void {
     const f = try std.fs.cwd().openFile("torrents/torrent.torrent", .{ .mode = std.fs.File.OpenMode.read_only });
     defer f.close();
@@ -40,7 +45,7 @@ fn parse_benecode(bytes: []const u8) BenecodeErrors!BenecodeValue {
     };
 }
 
-fn parse_int(bytes: []const u8) BenecodeErrors!BenecodeValue {
+fn parse_int(bytes: []const u8) BenecodeErrors!ParsedBenecode {
     var curr: usize = 0;
     if (bytes[curr] != 'i') {
         return BenecodeErrors.InvalidInt;
@@ -75,10 +80,12 @@ fn parse_int(bytes: []const u8) BenecodeErrors!BenecodeValue {
 
         int = -int;
     }
-    return BenecodeValue{ .Int = int };
+
+    const value = BenecodeValue{ .Int = int };
+    return ParsedBenecode{ .value = value, .chars_parsed = curr };
 }
 
-fn parse_str(bytes: []const u8) BenecodeErrors!BenecodeValue {
+fn parse_str(bytes: []const u8) BenecodeErrors!ParsedBenecode {
     var size: usize = 0;
     var colon_pos: usize = 0;
     while (colon_pos < bytes.len and bytes[colon_pos] != ':') {
@@ -95,12 +102,13 @@ fn parse_str(bytes: []const u8) BenecodeErrors!BenecodeValue {
     }
     colon_pos += 1;
 
-    return BenecodeValue{ .Str = bytes[colon_pos .. colon_pos + size] };
+    const value = BenecodeValue{ .Str = bytes[colon_pos .. colon_pos + size] };
+    return ParsedBenecode{ .value = value, .chars_parsed = colon_pos + size };
 }
 
 fn parse_list(bytes: []const u8) BenecodeErrors!BenecodeValue {
     _ = bytes;
-    return BenecodeErrors.InvalidDict;
+    return BenecodeErrors.InvalidList;
 }
 
 fn parse_dict(bytes: []const u8) BenecodeErrors!BenecodeValue {
@@ -108,40 +116,46 @@ fn parse_dict(bytes: []const u8) BenecodeErrors!BenecodeValue {
     return BenecodeErrors.InvalidDict;
 }
 
-fn free_benecode(value: BenecodeValue) void {
-    switch (value.tag) {
-        BenecodeTypes.Int => {},
-        BenecodeTypes.Str => {},
-        BenecodeTypes.List => {},
-        BenecodeTypes.Dict => {},
-    }
-}
-
 test "parse benecode string" {
     const str = "4:spam";
-    const value = try parse_str(str);
-    try std.testing.expectEqualStrings("spam", value.Str);
+    const result = try parse_str(str);
+    try std.testing.expectEqualStrings("spam", result.value.Str);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "parse invalid benecode string \"4spa:m\"" {
+    const value = parse_str("4spa:m");
+    try std.testing.expectError(BenecodeErrors.InvalidStr, value);
+}
+
+test "parse invalid benecode string \"4spam\"" {
+    const value = parse_str("4spam");
+    try std.testing.expectError(BenecodeErrors.InvalidStr, value);
 }
 
 test "parse positive benecode int" {
     const str = "i3e";
-    const value = try parse_int(str);
-    try std.testing.expectEqual(@as(i32, 3), value.Int);
+    const result = try parse_int(str);
+    try std.testing.expectEqual(@as(i32, 3), result.value.Int);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
 }
 
 test "parse negative benecode int" {
     const str = "i-3e";
-    const value = try parse_int(str);
-    try std.testing.expectEqual(@as(i32, -3), value.Int);
+    const result = try parse_int(str);
+    try std.testing.expectEqual(@as(i32, -3), result.value.Int);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
 }
 
 test "parse invalid benecode int" {
     const str = "ihelloe";
-    var value = parse_int(str);
+    const value = parse_int(str);
     try std.testing.expectError(BenecodeErrors.InvalidInt, value);
+}
 
+test "parse invalid benecode int negative zero" {
     const negative_zero = "i-0e";
-    value = parse_int(negative_zero);
+    const value = parse_int(negative_zero);
     try std.testing.expectError(BenecodeErrors.InvalidInt, value);
 }
 
