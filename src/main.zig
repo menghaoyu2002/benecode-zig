@@ -238,11 +238,52 @@ test "parse benecode dict" {
     const str = "d3:cow3:moo4:spam4:eggse";
     var result = try parse_dict(str, std.testing.allocator);
     defer result.value.Dict.deinit();
-    try std.testing.expectEqualStrings(result.value.Dict.get("cow").?.Str, "moo");
-    try std.testing.expectEqualStrings(result.value.Dict.get("spam").?.Str, "eggs");
+    try std.testing.expectEqualStrings("moo", result.value.Dict.get("cow").?.Str);
+    try std.testing.expectEqualStrings("eggs", result.value.Dict.get("spam").?.Str);
     try std.testing.expectEqual(str.len, result.chars_parsed);
 }
 
-test "parse benecode nested dicts" {}
-test "parse benecode dicts in lists" {}
-test "parse benecode lists in dicts" {}
+test "parse invalid benecode dict" {
+    const str = "d3:cow3:moo4:spam4:eggs";
+    var result = parse_dict(str, std.testing.allocator);
+    try std.testing.expectError(BenecodeErrors.InvalidDict, result);
+}
+
+test "parse benecode nested dicts" {
+    const str = "d6:nestedd4:test4:caseee";
+    var result = try parse_dict(str, std.testing.allocator);
+    var nested: std.StringHashMap(BenecodeValue) = result.value.Dict.get("nested").?.Dict;
+
+    defer nested.deinit();
+    defer result.value.Dict.deinit();
+
+    try std.testing.expectEqualStrings("case", nested.get("test").?.Str);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "parse benecode dicts in lists" {
+    const str = "ld4:test4:caseee";
+    const result = try parse_list(str, std.testing.allocator);
+    var dict = result.value.List.items[0].Dict;
+
+    defer dict.deinit();
+    defer result.value.List.deinit();
+
+    try std.testing.expectEqualStrings("case", dict.get("test").?.Str);
+    try std.testing.expectEqual(@as(usize, 1), result.value.List.items.len);
+    try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "parse benecode lists in dicts" {
+    const str = "d4:listli1eee";
+    var result = try parse_dict(str, std.testing.allocator);
+    const array: std.ArrayList(BenecodeValue) = result.value.Dict.get("list").?.List;
+
+    defer result.value.Dict.deinit();
+    defer array.deinit();
+
+    try std.testing.expectEqual(@as(i32, 1), array.items[0].Int);
+    try std.testing.expectEqual(@as(usize, 1), array.items.len);
+    try std.testing.expectEqual(@as(u32, 1), result.value.Dict.count());
+    try std.testing.expectEqual(str.len, result.chars_parsed);
+}
