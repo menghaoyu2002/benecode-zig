@@ -132,9 +132,29 @@ fn parse_list(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!Pa
 }
 
 fn parse_dict(bytes: []const u8, allocator: std.mem.Allocator) BenecodeErrors!ParsedBenecodeValue {
-    _ = bytes;
-    _ = allocator;
-    return BenecodeErrors.InvalidDict;
+    var curr: usize = 0;
+    if (bytes[curr] != 'd') {
+        return BenecodeErrors.InvalidDict;
+    }
+    curr += 1;
+
+    var dict = std.StringHashMap(BenecodeValue).init(allocator);
+    while (curr < bytes.len and bytes[curr] != 'e') {
+        const key = try parse_str(bytes[curr..]);
+        curr += key.chars_parsed;
+        const val = try parse_benecode(bytes[curr..], allocator);
+        curr += val.chars_parsed;
+        try dict.put(key.value.Str, val.value);
+    }
+
+    if (curr >= bytes.len or bytes[curr] != 'e') {
+        dict.deinit();
+        return BenecodeErrors.InvalidDict;
+    }
+    curr += 1;
+
+    const value = BenecodeValue{ .Dict = dict };
+    return ParsedBenecodeValue{ .value = value, .chars_parsed = curr };
 }
 
 test "parse benecode string" {
@@ -216,9 +236,11 @@ test "parse benecode nested lists" {
 
 test "parse benecode dict" {
     const str = "d3:cow3:moo4:spam4:eggse";
-    const result = try parse_dict(str, std.testing.allocator);
+    var result = try parse_dict(str, std.testing.allocator);
+    defer result.value.Dict.deinit();
     try std.testing.expectEqualStrings(result.value.Dict.get("cow").?.Str, "moo");
     try std.testing.expectEqualStrings(result.value.Dict.get("spam").?.Str, "eggs");
+    try std.testing.expectEqual(str.len, result.chars_parsed);
 }
 
 test "parse benecode nested dicts" {}
