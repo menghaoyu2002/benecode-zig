@@ -1,22 +1,86 @@
 const std = @import("std");
+const stdout = std.io.getStdOut().writer();
 
-const BenecodeErrors = error{ InvalidInt, InvalidStr, InvalidList, InvalidDict, OutOfMemory };
+pub const BenecodeErrors = error{ InvalidInt, InvalidStr, InvalidList, InvalidDict, OutOfMemory };
 
-const BenecodeTypes = enum {
+pub const BenecodeTypes = enum {
     Int,
     Str,
     List,
     Dict,
 };
 
-const BenecodeValue = union(BenecodeTypes) {
-    Int: i32,
+pub const BenecodeValue = union(BenecodeTypes) {
+    Int: i64,
     Str: []const u8,
     List: std.ArrayList(BenecodeValue),
     Dict: std.StringHashMap(BenecodeValue),
+
+    pub fn to_string(self: BenecodeValue, allocator: std.mem.Allocator) std.fmt.AllocPrintError![]const u8 {
+        return self._to_string(allocator, false);
+    }
+
+    pub fn to_json_string(self: BenecodeValue, allocator: std.mem.Allocator) std.fmt.AllocPrintError![]const u8 {
+        return self._to_string(allocator, true);
+    }
+
+    fn _to_string(self: BenecodeValue, allocator: std.mem.Allocator, is_json: bool) std.fmt.AllocPrintError![]const u8 {
+        return switch (self) {
+            .Str => |str| {
+                if (is_json) {
+                    return try std.json.stringifyAlloc(allocator, str, .{});
+                    // return try std.fmt.allocPrint(allocator, "\"{s}\"", .{str});
+                } else {
+                    return try std.fmt.allocPrint(allocator, "{s}", .{str});
+                }
+            },
+            .Int => |int| {
+                return try std.fmt.allocPrint(allocator, "{d}", .{int});
+            },
+            .List => |list| {
+                var s: []u8 = try std.fmt.allocPrint(allocator, "", .{});
+                for (list.items) |item| {
+                    const old_str = s;
+                    defer allocator.free(old_str);
+
+                    const item_str = try item._to_string(allocator, is_json);
+                    defer allocator.free(item_str);
+
+                    s = try std.fmt.allocPrint(allocator, "{s},{s}", .{ s, item_str });
+                }
+
+                defer allocator.free(s);
+                return try std.fmt.allocPrint(allocator, "[{s}]", .{s[1..]});
+            },
+            .Dict => |dict| {
+                var s: []u8 = try std.fmt.allocPrint(allocator, "", .{});
+                var iterator = dict.iterator();
+                while (iterator.next()) |entry| {
+                    const old_str = s;
+
+                    var key = entry.key_ptr.*;
+                    if (is_json) {
+                        key = try std.json.stringifyAlloc(allocator, key, .{});
+                    }
+
+                    const value: BenecodeValue = entry.value_ptr.*;
+
+                    const value_str = try value._to_string(allocator, is_json);
+                    defer allocator.free(value_str);
+
+                    s = try std.fmt.allocPrint(allocator, "{s},{s}:{s}", .{ s, key, value_str });
+
+                    allocator.free(old_str);
+                }
+
+                defer allocator.free(s);
+                return try std.fmt.allocPrint(allocator, "{{{s}}}", .{s[1..]});
+            },
+        };
+    }
 };
 
-const ParsedBenecodeValue = struct {
+pub const ParsedBenecodeValue = struct {
     value: BenecodeValue,
     chars_parsed: usize,
 };
@@ -43,7 +107,7 @@ pub fn parse_int(bytes: []const u8) BenecodeErrors!ParsedBenecodeValue {
         curr += 1;
     }
 
-    var int: i32 = 0;
+    var int: i64 = 0;
 
     while (curr < bytes.len and bytes[curr] != 'e') {
         if (bytes[curr] > '9' or bytes[curr] < '0') {
@@ -184,14 +248,14 @@ test "parse invalid benecode string \"4spam\"" {
 test "parse positive benecode int" {
     const str = "i3e";
     const result = try parse_int(str);
-    try std.testing.expectEqual(@as(i32, 3), result.value.Int);
+    try std.testing.expectEqual(@as(i64, 3), result.value.Int);
     try std.testing.expectEqual(str.len, result.chars_parsed);
 }
 
 test "parse negative benecode int" {
     const str = "i-3e";
     const result = try parse_int(str);
-    try std.testing.expectEqual(@as(i32, -3), result.value.Int);
+    try std.testing.expectEqual(@as(i64, -3), result.value.Int);
     try std.testing.expectEqual(str.len, result.chars_parsed);
 }
 
@@ -285,8 +349,59 @@ test "parse benecode lists in dicts" {
 
     defer free_benecode(result.value);
 
-    try std.testing.expectEqual(@as(i32, 1), array.items[0].Int);
+    try std.testing.expectEqual(@as(i64, 1), array.items[0].Int);
     try std.testing.expectEqual(@as(usize, 1), array.items.len);
     try std.testing.expectEqual(@as(u32, 1), result.value.Dict.count());
     try std.testing.expectEqual(str.len, result.chars_parsed);
+}
+
+test "transform benecode int to string" {
+    const allocator = std.testing.allocator;
+    const value = BenecodeValue{ .Int = 123 };
+    const str = try value.to_string(allocator);
+    defer allocator.free(str);
+
+    try std.testing.expectEqualStrings("123", str);
+}
+
+test "transform benecode string to string" {
+    const allocator = std.testing.allocator;
+    const value = BenecodeValue{ .Str = "Hello" };
+    const str = try value.to_string(allocator);
+    defer allocator.free(str);
+
+    try std.testing.expectEqualStrings("Hello", str);
+}
+
+test "transform benecode string to json string" {
+    const allocator = std.testing.allocator;
+    const value = BenecodeValue{ .Str = "Hello" };
+    const str = try value.to_json_string(allocator);
+    defer allocator.free(str);
+
+    try std.testing.expectEqualStrings("\"Hello\"", str);
+}
+
+test "transform benecode list to string" {
+    const allocator = std.testing.allocator;
+    const result = try parse_list("l3:one3:two5:threee", allocator);
+
+    const str = try result.value.to_string(allocator);
+
+    defer free_benecode(result.value);
+    defer allocator.free(str);
+
+    try std.testing.expectEqualStrings("[one,two,three]", str);
+}
+
+test "transform benecode dict to string" {
+    const allocator = std.testing.allocator;
+    const result = try parse_dict("d3:cow3:moo4:spam4:eggse", allocator);
+
+    const str = try result.value.to_string(allocator);
+
+    defer free_benecode(result.value);
+    defer allocator.free(str);
+
+    try std.testing.expectEqualStrings("{cow:moo,spam:eggs}", str);
 }
